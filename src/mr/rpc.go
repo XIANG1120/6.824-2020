@@ -22,8 +22,38 @@ type ExampleReply struct {
 	Y int
 }
 
-// Add your RPC definitions here.
+type Distributemapreq struct {
+}
 
+type Distributemapreps struct {
+	Mptask *Maptask
+}
+
+type Distributereducereq struct {
+}
+
+type Distributereducereqs struct {
+	Rdtask *Reducetask
+}
+
+type Finishedrequest struct {
+	Mptask *Maptask
+	Rdtask *Reducetask
+}
+
+type Finishedresponse struct {
+	Isfinished bool
+}
+
+type Searchmrequest struct {
+}
+
+type Searchmreponse struct {
+	Mapdone bool
+	Alldone bool
+}
+
+// Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the master.
