@@ -1,0 +1,6 @@
+Test (2A): initial election ...
+  ... Passed --   3.1  3   60   14758    0
+Test (2A): election after network failure ...
+  ... Passed --   6.0  3  140   28238    0
+PASS
+ok  	_/home/xulixiang/src/6.824/src/raft	9.121s
