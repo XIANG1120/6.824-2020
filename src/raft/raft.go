@@ -89,6 +89,8 @@ type Raft struct {
 
 	snapLastIndex int //快照的最后一个条目的下标
 	snapLastTerm  int //快照的最后一个条目的任期
+
+	applyCh chan ApplyMsg
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
@@ -139,7 +141,6 @@ type InstallSnapshotArgs struct {
 	SnapLastIndex int
 	SnapLastTerm  int
 	Done          bool
-	Applychan     chan ApplyMsg
 }
 type InstallSnapshotReply struct {
 	Term int
@@ -260,7 +261,7 @@ func (rf *Raft) updatecommitIndex() {
 }
 
 //向application层应用快照
-func (rf *Raft) installSnapshotToApplication(apply chan ApplyMsg) {
+func (rf *Raft) installSnapshotToApplication() {
 	//rf.mu.Lock()
 	//defer rf.mu.Unlock()
 	applysnapshot := &ApplyMsg{
@@ -272,11 +273,11 @@ func (rf *Raft) installSnapshotToApplication(apply chan ApplyMsg) {
 	rf.lastApplied = rf.snapLastIndex //为什么不加锁？
 	DPrintf("RaftNode[%d] installSnapshotToApplication, snapshotSize[%d] lastIncludedIndex[%d] lastIncludedTerm[%d]",
 		rf.me, len(applysnapshot.Snapshot), applysnapshot.SnapLastIndex, applysnapshot.SnapLastTerm)
-	apply <- *applysnapshot
+	rf.applyCh <- *applysnapshot
 }
 
 //向application层应用日志
-func (rf *Raft) logToApplication(apply chan ApplyMsg) {
+func (rf *Raft) logToApplication() {
 	for !rf.killed() {
 		time.Sleep(10 * time.Millisecond)
 		applylog := make([]ApplyMsg, 0)
@@ -293,7 +294,7 @@ func (rf *Raft) logToApplication(apply chan ApplyMsg) {
 				DPrintf("RaftNode[%d] applyLog, currentTerm[%d] lastApplied[%d] commitIndex[%d]", rf.me, rf.currentTerm, rf.lastApplied, rf.commitIndex)
 			}
 			for _, log := range applylog {
-				apply <- log
+				rf.applyCh <- log
 			}
 		}()
 	}
@@ -306,14 +307,10 @@ func (rf *Raft) Logtosnapshot(snapshot []byte, lastIndex int) {
 	if lastIndex <= rf.snapLastIndex { //如果比现存快照小，则丢弃
 		return
 	}
-	//fmt.Println(lastIndex)
-	//	fmt.Println(rf.SnapLastIndex)
-
 	// 快照的当前元信息
 	DPrintf("RafeNode[%d] TakeSnapshot begins, snapshotLastIndex[%d] lastIncludedIndex[%d] lastIncludedTerm[%d]",
 		rf.me, lastIndex, rf.snapLastIndex, rf.snapLastTerm)
 	compactlength := lastIndex - rf.snapLastIndex //压缩多长
-	//fmt.Println(rf.indextolog(lastIndex))
 	rf.snapLastTerm = rf.log[rf.indextolog(lastIndex)].Term
 	rf.snapLastIndex = lastIndex
 	// 压缩日志
@@ -475,7 +472,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	rf.snapLastIndex = args.SnapLastIndex
 	rf.snapLastTerm = args.SnapLastTerm
 	rf.persister.SaveStateAndSnapshot(rf.Stateforpersist(), args.Data) //持久化raft状态和快照
-	rf.installSnapshotToApplication(args.Applychan)                    //应用到状态机上
+	rf.installSnapshotToApplication()                                  //应用到状态机上
 	DPrintf("RaftNode[%d] installSnapshot ends, rf.lastIncludedIndex[%d] rf.lastIncludedTerm[%d] args.lastIncludedIndex[%d] args.lastIncludedTerm[%d] logSize[%d]",
 		rf.me, rf.snapLastIndex, rf.snapLastTerm, args.SnapLastIndex, args.SnapLastTerm, len(rf.log))
 }
@@ -667,14 +664,13 @@ func (rf *Raft) doAppendEnrties(Id int) {
 	}()
 }
 
-func (rf *Raft) doInstallSnapshot(Id int, applychan chan ApplyMsg) {
+func (rf *Raft) doInstallSnapshot(Id int) {
 	args := InstallSnapshotArgs{
 		Term:          rf.currentTerm,
 		Data:          rf.persister.ReadSnapshot(),
 		SnapLastTerm:  rf.snapLastTerm,
 		SnapLastIndex: rf.snapLastIndex,
 		Done:          true,
-		Applychan:     applychan,
 	}
 	reply := InstallSnapshotReply{}
 	go func() {
@@ -700,7 +696,7 @@ func (rf *Raft) doInstallSnapshot(Id int, applychan chan ApplyMsg) {
 	}()
 }
 
-func (rf *Raft) startAppendEntries(applychan chan ApplyMsg) {
+func (rf *Raft) startAppendEntries() {
 	for !rf.killed() {
 		time.Sleep(10 * time.Millisecond)
 
@@ -725,7 +721,7 @@ func (rf *Raft) startAppendEntries(applychan chan ApplyMsg) {
 				}
 				// 如果nextIndex在leader的snapshot内，那么直接同步snapshot
 				if rf.nextIndex[peerId] <= rf.snapLastIndex {
-					rf.doInstallSnapshot(peerId, applychan)
+					rf.doInstallSnapshot(peerId)
 				} else {
 					rf.doAppendEnrties(peerId)
 				}
@@ -847,16 +843,17 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.role = role_Follower
 	rf.votedFor = -1
 	rf.electiontime = time.Now()
+	rf.applyCh = applyCh
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
-	rf.installSnapshotToApplication(applyCh)
+	rf.installSnapshotToApplication()
 	DPrintf("RaftNode[%d] Make again", rf.me)
 
 	go rf.startelection()
-	go rf.startAppendEntries(applyCh)
-	go rf.logToApplication(applyCh)
+	go rf.startAppendEntries()
+	go rf.logToApplication()
 
 	DPrintf("Raftnode[%d]启动", me)
 
